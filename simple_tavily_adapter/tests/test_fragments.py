@@ -149,7 +149,10 @@ def test_fragment_payload_shape_and_emission_cap():
         assert set(f) == {"rank", "score", "chunk", "heading_path", "lines",
                           "chars", "oversize", "text", "neighbors"}
         assert len(f["text"]) <= 900          # emit cap + marker
-        assert all(0 <= n < payload["fragments_total"] for n in f["neighbors"])
+        for n in f["neighbors"]:
+            # neighbors must be resolvable: own 1-based line range included
+            assert 0 <= n["chunk"] < payload["fragments_total"]
+            assert n["lines"][0] <= n["lines"][1]
 
 
 def _load_extract():
@@ -211,6 +214,16 @@ def test_real_saved_extract_chunks_cleanly():
 
 
 @needs_skills
+def test_target_chars_zero_and_negative_do_not_crash():
+    # Degenerate target clamps to 1; a dict comes back either way, no raise.
+    for bad in (0, -50):
+        payload = fragments.fragments_payload(DOC, "x.md", "cats", top_k=2,
+                                              target_chars=bad)
+        assert isinstance(payload, dict)
+        assert "fragments" in payload and "zero_match" in payload
+
+
+@needs_skills
 def test_punctuation_only_doc_no_zero_division():
     # A page with zero word-tokens made BM25 avg doc length 0 -> crash.
     doc = "?!.,;:\n\n+++ === ???\n\n<></><>\n"
@@ -252,6 +265,9 @@ def test_extract_query_sed_hint_is_valid_syntax(tmp_path, monkeypatch, capsys):
          "--fragments", "2"])
     assert ext.main() == 0
     out = json.loads(capsys.readouterr().out)
-    m = re.search(r"sed -n '([^']+)'", out["hint"])
-    assert m, out["hint"]
-    assert re.fullmatch(r"(\d+,\d+p;?)+", m.group(1)), m.group(1)
+    # The base hint contains `sed -n '1,300p'` too; the fragment-escalation
+    # command is the LAST sed mention in the hint.
+    matches = re.findall(r"sed -n '([^']+)'", out["hint"])
+    assert matches, out["hint"]
+    frag_sed = matches[-1]
+    assert re.fullmatch(r"(\d+,\d+p;?)+", frag_sed), frag_sed
