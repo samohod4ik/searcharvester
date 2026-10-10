@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Заметки для будущего Claude (или нового разработчика). Цель — быстро сориентироваться, не перечитывая всю историю.
+Заметки для будущего агента (Codex, Devin) или нового разработчика. Цель — быстро сориентироваться, не перечитывая всю историю.
 
 ## Что это за проект
 
@@ -62,7 +62,7 @@ Pre-built образ в GHCR: `ghcr.io/vakovalskii/searcharvester:{latest,2.1.0}
 ## Skills — три штуки
 
 - `searcharvester-search/` — SKILL.md + `scripts/search.py`. Зовёт `/search` через `urllib`, возвращает компактный JSON без лишних полей.
-- `searcharvester-extract/` — SKILL.md + `scripts/extract.py`. Зовёт `/extract` и `/extract/{id}/{page}`, отдаёт markdown + метаданные.
+- `searcharvester-extract/` — SKILL.md + `scripts/extract.py` + `scripts/fragments.py`. Зовёт `/extract`, сохраняет полный markdown в `./extracts/<id>.md`, отдаёт указатель + превью. С `--query "<подвопрос>"` сверху режет сохранённый файл на структурные чанки и BM25-ранжирует их по запросу: агент получает лучшие фрагменты с путём заголовков и номерами строк, эскалация — соседние чанки / `sed -n 'a,bp'` / весь файл (он уже на диске). `fragments.py` работает и отдельно (`--file --query`) — переранжировать сохранённый файл под новый вопрос без повторного fetch.
 - `searcharvester-deep-research/` — **только SKILL.md, без кода**. Методология на ~200 строк: план → gather → gap-check → synthesise → verify. Скилл просто _описывает_ процесс для LLM; реальные tool-вызовы уже есть в первых двух скиллах.
 
 Скиллы синкаются в `hermes-data/skills/` перед спавном. Формат переносимый ([agentskills.io](https://agentskills.io)) — те же скиллы работают в Claude Code, Cursor, OpenCode.
@@ -98,7 +98,7 @@ docker compose exec tavily-adapter /opt/hermes/.venv/bin/python -m pytest -q  # 
 ## Когда пишешь код / документацию
 
 - Доки (README, docs/) — **английский primary**, RU + ZH переводы в `docs/{ru,zh}/`.
-- CLAUDE.md и переписка — на русском.
+- AGENTS.md и переписка — на русском.
 - Не плоди новые markdown-файлы без нужды — проверь `docs/` сначала.
 - Секреты (`secret_key`, `OPENAI_API_KEY`) только в `config.yaml` / `.env.hermes` (оба gitignored), **никогда** в коде.
 - После изменений в `main.py` / `orchestrator.py` / `events.py` / `Dockerfile` / `entrypoint-adapter.sh` — пересобрать образ: `docker compose up -d --build tavily-adapter`.
