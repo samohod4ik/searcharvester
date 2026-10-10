@@ -196,19 +196,23 @@ def _merge_units(units: list[Unit]) -> tuple[str, int, int, str]:
 
 
 def chunk_markdown(text: str, target_chars: int = DEFAULT_TARGET_CHARS) -> list[Chunk]:
+    target_chars = max(1, target_chars)
     lines = text.split("\n")
     # raw rows: (heading_path, oversize, kind, line_start, line_end, text)
     raw: list[tuple[list[str], bool, str, int, int, str]] = []
     cur: list[Unit] = []
+    cur_chars = 0
     cur_path: list[str] = []
     stack: list[tuple[int, str]] = []
 
     def flush():
+        nonlocal cur_chars
         if not cur:
             return
         kind, a, b, body = _merge_units(cur)
         raw.append((list(cur_path), len(body) > target_chars, kind, a, b, body))
         cur.clear()
+        cur_chars = 0
 
     for u in _units(lines):
         # A single line longer than ~2x target is not a real heading/paragraph
@@ -233,8 +237,8 @@ def chunk_markdown(text: str, target_chars: int = DEFAULT_TARGET_CHARS) -> list[
             stack.append((u.level, u.title))
             cur_path = [t for _, t in stack]
             cur.append(u)
+            cur_chars = u.chars
             continue
-        cur_chars = sum(x.chars for x in cur)
         if u.chars > target_chars:
             # non-atomic unit, 1x-2x target: split at line boundaries
             flush()
@@ -246,6 +250,7 @@ def chunk_markdown(text: str, target_chars: int = DEFAULT_TARGET_CHARS) -> list[
         if cur and cur_chars + u.chars > target_chars:
             flush()
         cur.append(u)
+        cur_chars += u.chars
     flush()
 
     # Tail merge: a small chunk joins a same-section neighbor when the result
@@ -298,13 +303,18 @@ def rank_chunks(chunks: list[Chunk], query: str, top_k: int = 3,
 
 
 def fragment_json(chunk: Chunk, score: float, rank: int,
-                  total: int, emit_cap: int) -> dict:
+                  chunks: list[Chunk], emit_cap: int) -> dict:
     text = chunk.text
     if len(text) > emit_cap:
         text = (text[:emit_cap]
                 + f"\n[... +{len(chunk.text) - emit_cap} chars, "
                   f"lines {chunk.line_start}-{chunk.line_end}]")
-    neighbors = [i for i in (chunk.idx - 1, chunk.idx + 1) if 0 <= i < total]
+    total = len(chunks)
+    # Neighbors carry their own 1-based line ranges so the agent can sed
+    # them directly; bare ids alone are not resolvable to content.
+    neighbors = [{"chunk": i, "lines": [chunks[i].line_start,
+                                      chunks[i].line_end]}
+                 for i in (chunk.idx - 1, chunk.idx + 1) if 0 <= i < total]
     return {
         "rank": rank,
         "score": round(score, 3),
@@ -326,14 +336,14 @@ def fragments_payload(markdown: str, path: str, query: str,
     hard-split pieces of one overlong source line share that line number, so
     `lines` ranges may overlap between chunks -- escalation reads a superset,
     which is the safe direction."""
+    target_chars = max(1, target_chars)
     chunks = chunk_markdown(markdown, target_chars=target_chars)
     ranked = rank_chunks(chunks, query, top_k=max(1, top_k))
-    total = len(chunks)
     return {
         "path": path,
-        "fragments": [fragment_json(c, s, i + 1, total, target_chars)
+        "fragments": [fragment_json(c, s, i + 1, chunks, target_chars)
                       for i, (c, s) in enumerate(ranked)],
-        "fragments_total": total,
+        "fragments_total": len(chunks),
         "zero_match": not ranked,
     }
 
