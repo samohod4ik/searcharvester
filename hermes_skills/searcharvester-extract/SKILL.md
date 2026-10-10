@@ -4,10 +4,10 @@ description: >
   Fetch a web page and extract its main content as clean markdown via
   trafilatura. Strips navigation, ads, and footers automatically. Always saves
   the FULL page to ./extracts/<id>.md and returns a pointer, so agents never
-  hit output caps. With --query it additionally ranks query-relevant
-  fragments of the saved page (BM25 over structure-aware chunks). Use after
-  `searcharvester-search` to actually read the pages behind your URLs.
-version: 1.1.0
+  hit output caps. Default read mode: pass your question as --query and the
+  response includes the top BM25-ranked fragments of the saved page. Use
+  after `searcharvester-search` to actually read the pages behind your URLs.
+version: 1.2.0
 metadata:
   hermes:
     tags: [extract, read, content, markdown, research, fragments]
@@ -21,8 +21,10 @@ metadata:
 - You have a specific URL and need its readable content (articles, docs, wiki pages).
 - You followed up a `searcharvester-search` result and want to read it.
 - You need a clean markdown version of a page for citation quoting.
-- You know the sub-question the page should answer — pass it as `--query`
-  and read the top fragments first instead of the whole page.
+- Default: every call carries `--query` with the question the page should
+  answer — you get the top fragments in the same response instead of a
+  bare pointer. Omit `--query` only when you genuinely cannot name what
+  you are looking for.
 
 Do **not** use this skill for:
 
@@ -34,14 +36,25 @@ Do **not** use this skill for:
 The extract endpoint lives at `$SEARCHARVESTER_URL` (default
 `http://tavily-adapter:8000`). Use the helper script.
 
-### Read a page (full text saved to disk)
+### Read a page — default: pass your question (`--query`)
 
 ```bash
-python3 /opt/data/skills/searcharvester-extract/scripts/extract.py --url "https://en.wikipedia.org/wiki/Docker_(software)"
+python3 /opt/data/skills/searcharvester-extract/scripts/extract.py \
+  --url "https://long.example.com/article" \
+  --query "what you actually need from this page"
 ```
 
-The script always fetches the complete document (paginating internally) and
-writes it to `./extracts/<id>.md`. It prints a pointer, not the body:
+Always pass `--query`: the script saves the full page AND returns the
+fragments that answer your question in the same call, so you rarely spend
+model context on the rest of the page.
+
+The response is a pointer plus `fragments[]`: the saved page split into
+chunks that respect headings, code fences and tables, BM25-ranked against
+your query. `fragments_total` is the chunk count; each fragment carries
+`rank`, `score`, `chunk` id, its heading path, 1-based `lines` range,
+`chars`, `oversize`, `neighbors` (each `{"chunk": i, "lines": [a, b]}`)
+and the text (typically ~300-600 tokens; `--fragments N` changes the
+count).
 
 ```json
 {
@@ -52,31 +65,11 @@ writes it to `./extracts/<id>.md`. It prints a pointer, not the body:
   "pages_fetched": 2,
   "path": "./extracts/abc123def4567890.md",
   "preview": "first 800 chars...",
-  "hint": "Full markdown saved to ./extracts/.... Read specific parts with: ..."
+  "fragments_total": 11,
+  "fragments": [{"rank": 1, "score": 8.4, "chunk": 5, "heading_path": ["Guide", "Install"], "lines": [120, 163], "chars": 2140, "neighbors": [{"chunk": 4, "lines": [83, 119]}], "text": "..."}],
+  "hint": "..."
 }
 ```
-
-Work the saved file with shell tools:
-
-```bash
-grep -ni 'keyword' ./extracts/abc123def4567890.md
-sed -n '120,180p' ./extracts/abc123def4567890.md
-```
-
-### Fragment mode: read only what answers your question
-
-```bash
-python3 /opt/data/skills/searcharvester-extract/scripts/extract.py \
-  --url "https://long.example.com/article" \
-  --query "what you actually need from this page"
-```
-
-Same pointer, plus `fragments[]`: the saved page split into chunks that
-respect headings, code fences and tables, BM25-ranked against your query.
-`fragments_total` is the chunk count; each fragment carries `rank`, `score`,
-`chunk` id, its heading path, 1-based `lines` range, `chars`, `oversize`,
-`neighbors` (each `{"chunk": i, "lines": [a, b]}`) and the text (typically
-~300-600 tokens; `--fragments N` changes the count).
 
 Escalation is cheap and ordered:
 
@@ -104,12 +97,27 @@ python3 /opt/data/skills/searcharvester-extract/scripts/fragments.py \
 Fragments are a read mode, not a filter — when a claim needs surrounding
 qualifiers, a table, or a long code block, escalate to the file.
 
+### Pointer only (no `--query`)
+
+```bash
+python3 /opt/data/skills/searcharvester-extract/scripts/extract.py --url "https://en.wikipedia.org/wiki/Docker_(software)"
+```
+
+Same saved page, but the response is only the pointer — no fragments, so
+the relevant part does not come back for free. Reach for the file with
+shell tools instead:
+
+```bash
+grep -ni 'keyword' ./extracts/abc123def4567890.md
+sed -n '120,180p' ./extracts/abc123def4567890.md
+```
+
 ## Parameters reference
 
 | Flag | Values | Default |
 |---|---|---|
 | `--url` | URL | required |
-| `--query` | free text (your sub-question) | off — pointer only |
+| `--query` | free text (your sub-question) | **expected on every call**; omit only when you cannot name what you need |
 | `--fragments` | int | 3 (only with `--query`) |
 | `--size` | ignored | kept for back-compat; the script always saves full |
 | `--base-url` | adapter URL | `$SEARCHARVESTER_URL` or `http://tavily-adapter:8000` |
